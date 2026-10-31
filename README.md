@@ -1,351 +1,130 @@
-# JobCompass 
+# JobCompass
 
-> An AI-powered career platform for tech professionals and graduates in the UK. Find jobs direct from company career sites, know which companies actively sponsor visas, build a strong resume, and let AutoApplier handle the forms — all from one place.
+> An AI-powered career platform for tech professionals and graduates in the UK. Jobs come from company career sites, not aggregators. Sponsorship status comes from the Home Office register. Resume, match, apply, prepare, track, and analyse sit in one loop.
 
-**Status:** 🟡 Active development — Day 1 scaffold in progress · June 2026
+**Status:** Active development · documentation aligned with the product as of October 2026
+
+Implementation lives in a private repository. This repository is the public product and architecture description.
 
 ---
 
-## What is JobCompass?
-
-JobCompass is a full-stack career platform that covers the entire job search journey:
+## What JobCompass is
 
 ```
-Resume → Discover → Match → Apply → Prepare → Track
+Resume → Discover → Match → Apply → Prepare → Track → Analyse
 ```
 
-Every module feeds the next. Your resume shapes your job matches. Your matches feed AutoApplier. Your applications trigger interview prep. The platform compounds value the more you use it.
+Each step feeds the next. The CV shapes matches. Matches feed AutoApplier. Applications open interview prep and tracking. Analytics show where the funnel leaks.
 
-**What makes it different:**
+**What stays true:**
 
-- **No aggregators.** Jobs are scraped directly from company career websites — not LinkedIn, not Indeed. You get fresher data, real apply links, and salary information that aggregators strip out.
-- **Live sponsorship intelligence.** The UK Home Office publishes a public register of licensed sponsors. JobCompass cross-references it against every job listing, shows how many people each company has recently sponsored, and surfaces this on every job card.
-- **Deliberate hybrid architecture.** Modules that interact with the external web (scraper, AutoApplier, enrichment) are built as autonomous agents that self-heal when sites change. Internal data pipelines stay deterministic and cheap.
-- **Guided resume builder.** Skills segmented by category, a 3-part experience bullet enforcer, diff tracking between uploads, and a Claude-generated profile summary.
+- **No aggregators.** Listings are taken from employer career pages. LinkedIn, Indeed, Glassdoor, and Welcome to the Jungle are not job sources. WTTJ is UX inspiration only.
+- **UK first.** Three boards (graduate, sponsored, non-sponsored), Home Office sponsor cross-reference, UK cities and universities in the profile.
+- **Hybrid architecture.** Modules that touch the live web (scraper, AutoApplier, research) are agents. Auth, matching, tracking, and analytics are deterministic pipelines.
+- **Human-in-the-loop apply.** AutoApplier reads forms at runtime. It fills and waits. The user submits. CAPTCHA is a pause, never a solver.
 
 ---
 
 ## Modules
 
-### Core Platform
-
-| Module | Description | Architecture |
+| Module | Role | Kind |
 |---|---|---|
-| **Auth & User System** | Login, OAuth, profile, UI theme settings | Traditional |
-| **Smart Profile & Resume Engine** | Guided 4-phase onboarding: seed from CV → categorised skills → 3-part experience builder → AI summary | Traditional + AI |
-| **Job Discovery Engine** | Autonomous scraper across UK company career sites | 🤖 Agent |
-| **Graduate Roles Dashboard** | Filtered, paginated view of graduate schemes and entry-level roles | Traditional |
-| **Sponsored Roles Dashboard** | Roles at Home Office registered sponsors, filtered by sponsorship activity | Traditional |
-| **Non-Sponsored Roles Dashboard** | Roles for UK citizens and settled status holders | Traditional |
-| **Match & Scoring Engine** | Resume ↔ job semantic similarity score, keyword overlap, seniority fit | Traditional + AI |
-| **AutoApplier** | Browser agent that fills and submits ATS forms autonomously | 🤖 Agent (HitL) |
-| **Application Tracker** | Full lifecycle FSM with email-based auto-status updates | Traditional |
-| **Interview Preparation** | Role-specific prep guide with curated resource links | Traditional + AI |
-| **Research Agent** | Enriches company records with sponsorship history, salary benchmarks, company signals | 🤖 Agent |
-| **Analytics Dashboard** | Response rate, funnel, keyword performance, A/B resume tracking | Traditional |
+| Auth | Google or LinkedIn Log In. Identity only — no LinkedIn profile import | Pipeline |
+| Profile & resume | Upload a CV or fill sections by hand. Seed → enrich → diff → summary | Pipeline + AI summary |
+| Job discovery | Playwright scrape of first-party career boards. UK jobs only | Agent |
+| Three boards | Graduate · sponsored · non-sponsored | Pipeline |
+| Match | Semantic 60% / keyword 30% / seniority 10%. Stored per user and job | Pipeline |
+| AutoApplier | Runtime form fill, HitL gates, snapshot on submit | Agent (HitL) |
+| Tracker | Application FSM, optional Gmail status | Pipeline |
+| Interview prep | Role guide from the posting and the profile | Pipeline + AI |
+| Research | Company enrichment from public sources | Agent |
+| Analytics | Funnel, boards, scores, 30-day activity | Pipeline |
+| Sponsor pages | Public `/sponsors/{slug}` for licensed sponsors | Pipeline |
 
-### Module 2 — Smart Profile & Resume Engine (in detail)
+### Scraper, in public terms
 
-The resume module runs as a guided 4-phase loop — not a form:
+A first visit to a careers **path** gets a how-to card (page kind, listing links, pager, optional UK filter). That card is how to walk the **page**, not how to parse a job description. Playwright collects listings. A UK posting parser then fills skills, seniority, pay, remote/hybrid, visa language, and SOC when the text supports them. Production JD parse does not call Claude.
 
-1. **Seed** — Upload your CV. Sections are detected and parsed in real time. Fields pre-populate as extraction completes. You correct errors, not fill blanks.
-2. **Enrich** — Skills are segmented into `Programming`, `Tools & Applications`, `Security`, and `Databases`, with predictive autocomplete ranked by relevance to your target role. Experience entries use the **3-part Guided Builder**: *What was done → How → Impact (quantified)*. The Impact field is validated for a measurable metric — entries without one are flagged and given a reduced ATS score.
-3. **Diff** — On re-upload, a structured diff surfaces what changed: new skills, removed skills, altered bullets, ATS score regression. You accept, reject, or manually merge each change.
-4. **Summary** — A profile summary is generated by Claude from your completed experience entries and skills. Edit it inline or regenerate with a different tone.
+robots.txt is honoured as `JobCompassBot`. Hosted ATS search boards are a fallback only when the employer already lists roles on their own site.
 
-### AutoApplier — Human-in-the-loop gates
+### AutoApplier gates
 
-AutoApplier is an agent, not a field map. It reads form structure at runtime and handles novel ATS platforms without hand-coded configuration. It always pauses for human approval on:
+The agent always pauses for:
 
-- CAPTCHA (mandatory resolution)
-- Any field where confidence is below 80%
-- Salary, notice period, and right-to-work fields
-- First application to a company (opt-in mode)
-- Match score below your configured threshold (default: 65%)
+- CAPTCHA
+- Field confidence below 80%
+- Salary, notice period, and right-to-work
+- First application to a company
+- Match score below the user’s threshold (default 65%)
+
+Default mode is fill-and-review. There is no CAPTCHA solver and no hard-coded ATS field map.
 
 ---
 
 ## Architecture
 
-JobCompass uses a **deliberate hybrid architecture.** The rule is simple:
-
-> Does this module talk to the external web? → Agent. Does it work on internal data? → Traditional pipeline.
+> External web → agents. Internal data → deterministic pipelines.
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                       CLIENT LAYER                             │
-│             Next.js 14 (App Router, TypeScript)                │
-│        Dashboard · Job Tables · Resume Builder · Tracker       │
-└──────────────────────────┬─────────────────────────────────────┘
-                           │ HTTPS / REST + SSE
-┌──────────────────────────▼─────────────────────────────────────┐
-│                        API LAYER                               │
-│              FastAPI (Python 3.12, async)                      │
-│   Auth · Profile · Skills · Experience · Jobs · Applications   │
-└──────┬───────────────────┬──────────────────────┬─────────────┘
-       │                   │                      │
-┌──────▼──────┐   ┌────────▼───────┐   ┌─────────▼──────────────┐
-│ PostgreSQL  │   │ Redis           │   │ Cloudflare R2           │
-│ + pgvector  │   │ (Agent state    │   │ (Resumes, Snapshots,    │
-│ (Primary DB)│   │  + task queue)  │   │  Agent screenshots)     │
-└─────────────┘   └────────┬───────┘   └────────────────────────┘
-                           │ Celery task queues
-         ┌─────────────────┼──────────────────────┐
-         │                 │                      │
-   ┌─────▼──────┐   ┌──────▼──────┐   ┌──────────▼─────┐
-   │  Scraper   │   │ AutoApplier │   │ Research Agent  │
-   │  Agent     │   │ Agent       │   │                 │
-   │ (Playwright│   │ (Playwright │   │ (Web search +   │
-   │ + stealth) │   │ + stealth)  │   │  gov.uk data)   │
-   └────────────┘   └─────────────┘   └────────────────┘
-```
-
-### Agent autonomy levels
-
-| Module | Autonomy | Human gates |
-|---|---|---|
-| Scraper Agent | Fully autonomous | Only when permanently blocked (Cloudflare wall) |
-| Match Engine | Fully autonomous | User reviews ranked list; scoring needs no intervention |
-| Research Agent | Fully autonomous | None — reads and stores only, no external actions |
-| Application Tracker | Fully autonomous | User decides next actions from tracker view |
-| AutoApplier Agent | Hybrid | CAPTCHA · low-confidence fields · salary · right-to-work |
-| Resume Engine | Human-in-loop | All resume content changes require user approval |
-| Follow-up System | Human-in-loop | Drafts autonomously; sending always needs approval |
-| Auth · Analytics · Dashboards | N/A | Not agent candidates |
-
----
-
-## Tech Stack
-
-| Layer | Technology | Why |
-|---|---|---|
-| Backend | Python 3.12 + FastAPI | Best ecosystem for scraping, AI SDKs, async queues, agent loops |
-| Frontend | Next.js 14 + TypeScript | App Router, RSC for speed, Tailwind + Shadcn/ui |
-| Browser automation | Playwright + stealth plugin | Used by all three agents; stealth reduces bot detection |
-| Agent orchestration | Anthropic Tool Use (native) | Claude natively supports multi-step tool-use loops; no framework overhead |
-| Database | PostgreSQL 16 + pgvector | Relational + vector search in one database; JSONB for flexible JD fields |
-| Queue / cache | Redis + Celery | Separate queues per agent type for independent scaling |
-| AI / LLM | Anthropic Claude (claude-sonnet-4-6) | Resume analysis, agent reasoning, document generation, interview prep |
-| Embeddings | OpenAI text-embedding-3-small | Resume to job semantic match scoring |
-| File storage | Cloudflare R2 | Resumes, application snapshots, agent screenshots |
-| Auth | Auth.js (Next.js) | OAuth + email/password; no vendor lock-in |
-| Email parsing | Gmail API + IMAP | Application tracker auto-status updates from recruiter replies |
-| Deployment | Docker Compose → Railway / Render | Self-hostable; low ops overhead for MVP |
-
----
-
-## Project Structure
-
-```
-jobcompass/
-├── backend/
-│   ├── app/
-│   │   ├── api/                  # FastAPI routers
-│   │   │   ├── auth.py
-│   │   │   ├── profile.py
-│   │   │   ├── skills.py         # Module 2 — skills endpoints
-│   │   │   ├── experience.py     # Module 2 — experience builder endpoints
-│   │   │   ├── resume.py         # Module 2 — upload, ATS score, diff
-│   │   │   ├── jobs.py
-│   │   │   └── applications.py
-│   │   ├── models/               # SQLAlchemy models
-│   │   │   ├── user.py
-│   │   │   ├── profile.py
-│   │   │   ├── skills.py         # user_skills + skill_taxonomy
-│   │   │   ├── experience.py     # experience_entries + experience_bullets
-│   │   │   ├── resume.py         # resumes + resume_diff_history
-│   │   │   ├── job.py
-│   │   │   └── application.py
-│   │   ├── services/
-│   │   │   ├── profile_engine/   # Module 2 — 4-phase pipeline
-│   │   │   │   ├── extractor.py  # PDF/DOCX text extraction
-│   │   │   │   ├── seeder.py     # resume to profile pre-population
-│   │   │   │   ├── differ.py     # re-upload diff computation
-│   │   │   │   ├── validator.py  # metric presence, ATS scoring
-│   │   │   │   └── summariser.py # Claude profile summary generation
-│   │   │   ├── scraper/          # Scraper Agent
-│   │   │   ├── matcher/          # Match & scoring engine
-│   │   │   ├── autoapplier/      # AutoApplier Agent
-│   │   │   ├── research/         # Research Agent
-│   │   │   └── tracker/          # Application lifecycle
-│   │   └── tasks/                # Celery tasks (scraper / ai / applier queues)
-│   ├── alembic/                  # DB migrations
-│   └── pyproject.toml
-├── frontend/
-│   ├── app/                      # Next.js App Router
-│   │   ├── dashboard/
-│   │   ├── resume/               # Module 2 — guided builder UI
-│   │   │   ├── upload/
-│   │   │   ├── skills/
-│   │   │   ├── experience/
-│   │   │   └── summary/
-│   │   ├── jobs/
-│   │   └── applications/
-│   ├── components/
-│   └── package.json
-├── infra/
-│   └── docker-compose.yml
-└── docs/
-    ├── PRD.md
-    ├── TRD.md
-    └── ARCHITECTURE.md
+┌─────────────────────────────────────────────────────────────┐
+│  CLIENT — Next.js 14 (App Router)                           │
+│  Auth.js session · Tailwind + Shadcn · TanStack Query       │
+└────────────────────────────┬────────────────────────────────┘
+                             │ HTTPS  Bearer JWT
+┌────────────────────────────▼────────────────────────────────┐
+│  API — FastAPI /api/v1                                      │
+│  Auth · Profile · Jobs · Applications · Prep · Analytics    │
+└──────┬─────────────────┬──────────────────┬─────────────────┘
+       │                 │                  │
+┌──────▼──────┐  ┌───────▼────────┐  ┌─────▼──────────┐
+│ PostgreSQL  │  │ Redis           │  │ Cloudflare R2  │
+│ + pgvector  │  │ Celery broker   │  │ Resumes, snaps │
+└─────────────┘  └───────┬────────┘  └────────────────┘
+                         │ Celery
+         ┌───────────────┼────────────────┐
+   ┌─────▼─────┐  ┌──────▼──────┐  ┌─────▼──────┐
+   │ scraper   │  │ AutoApplier │  │ AI / embed │
+   └───────────┘  └─────────────┘  └────────────┘
 ```
 
 ---
 
-## Local Development
+## Stack
 
-### Prerequisites
-
-```bash
-# Python 3.12
-brew install python@3.12
-
-# Node.js 20 LTS
-brew install node
-
-# GitHub CLI
-brew install gh && gh auth login
-
-# uv (fast Python package manager)
-pip install uv
-
-# Playwright + all browsers
-pip install playwright && playwright install
-
-# Docker Desktop — docker.com/get-started
-```
-
-### First run
-
-```bash
-git clone https://github.com/YOUR_USERNAME/jobcompass.git
-cd jobcompass
-
-# Start Postgres (with pgvector) + Redis
-docker compose -f infra/docker-compose.yml up -d
-
-# Backend
-cd backend
-uv sync
-uv run alembic upgrade head
-uv run uvicorn app.main:app --reload
-
-# Frontend (separate terminal)
-cd frontend
-npm install
-npm run dev
-```
-
-App runs at `http://localhost:3000` · API at `http://localhost:8000/api/v1`
-
-### Environment variables
-
-Copy `.env.example` to `.env` and fill in:
-
-```env
-DATABASE_URL=postgresql+asyncpg://jobcompass:local@localhost:5432/jobcompass
-REDIS_URL=redis://localhost:6379
-
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-
-R2_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com
-R2_ACCESS_KEY=...
-R2_SECRET_KEY=...
-R2_BUCKET=jobcompass-files
-
-NEXTAUTH_SECRET=...
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-GITHUB_CLIENT_ID=...
-GITHUB_CLIENT_SECRET=...
-
-MAX_APPLICATIONS_PER_DAY=10
-MATCH_SCORE_THRESHOLD=65
-SCRAPE_INTERVAL_HOURS=6
-```
-
----
-
-## 4-Week Roadmap
-
-### Week 1 — Foundation & Scraper Agent
-- [ ] Monorepo structure, Docker Compose (Postgres + pgvector + Redis)
-- [ ] Full DB schema including `user_skills`, `experience_entries`, `experience_bullets`, `skill_taxonomy`, `resume_diff_history`
-- [ ] FastAPI skeleton with JWT auth
-- [ ] Scraper Agent: Playwright + stealth, career site detection, dedup pipeline
-- [ ] Home Office sponsor register CSV parser (weekly schedule)
-
-**Milestone:** 100+ fresh jobs/day stored with sponsorship tags
-
-### Week 2 — Smart Profile Engine & Match Scoring
-- [ ] Resume upload → PDF/DOCX extraction → SSE streaming pre-population
-- [ ] Skills autocomplete API + skill_taxonomy seed data
-- [ ] 3-part Guided Experience Builder API + metric validator
-- [ ] Profile Summary generation (Claude) + inline edit
-- [ ] Resume diff engine + review screen
-- [ ] ATS scoring (5 dimensions) + embedding generation
-
-**Milestone:** Upload a CV, receive ATS score + structured profile in under 30 seconds
-
-### Week 3 — AutoApplier Agent & Tracker
-- [ ] AutoApplier Agent: Greenhouse + Lever + direct career forms
-- [ ] Human-timing simulation + CAPTCHA detection + low-confidence gates
-- [ ] Application Tracker: status FSM + document snapshot per submission
-- [ ] Gmail API integration: email parser → auto-status update
-- [ ] Research Agent: gov.uk enrichment + salary benchmarks
-
-**Milestone:** 20+ autonomous applications/day, 90%+ success rate
-
-### Week 4 — Dashboard, Analytics & Polish
-- [ ] Next.js job boards: three dashboards with all filters and match % column
-- [ ] Module 2 UI: guided builder with live autocomplete, bullet editor, diff review
-- [ ] Analytics: funnel, response rate, keyword performance
-- [ ] Follow-up draft generator (day 7 / day 14, user-approved before send)
-- [ ] Interview prep guide generation
-- [ ] Agent run audit log exposed in UI
-- [ ] Docker Compose production config
-
-**Milestone:** Working MVP, fully self-hostable, all modules end-to-end
-
----
-
-## Key Design Decisions
-
-**Why no LinkedIn/Indeed?** Aggregators add lag, strip salary and apply links, and break on ToS changes. Direct company career sites give fresher data and a more defensible architecture.
-
-**Why agents for scraping and applying?** Career sites and ATS platforms change constantly. An agent reads structure at runtime and adapts. A traditional scraper with hard-coded selectors breaks silently.
-
-**Why the 3-part bullet format?** ATS systems score bullets higher when they contain action verbs, method context, and measurable impact. Enforcing structure at input time consistently produces higher scores without requiring users to know ATS rules.
-
-**Why separate skill categories?** Flat skill arrays make gap detection generic. Segmenting into Programming / Tools & Applications / Security / Databases maps directly to how most JDs structure requirements.
-
----
-
-## Branch Strategy
-
-```
-main          ← stable, tagged at each weekly milestone
-└── develop   ← integration branch
-    ├── feature/scraper-agent
-    ├── feature/profile-engine
-    ├── feature/autoapplier-agent
-    ├── feature/tracker
-    └── feature/dashboard
-```
-
----
-
-## Documentation
-
-| Document | Description |
+| Layer | Choice |
 |---|---|
-| [`docs/PRD.md`](docs/PRD.md) | Product Requirements Document v1.2 |
-| [`docs/TRD.md`](docs/TRD.md) | Technical Requirements Document v1.2 |
+| Backend | Python 3.12, FastAPI, SQLAlchemy 2.0 async, Alembic |
+| Frontend | Next.js 14 App Router, Auth.js v5, Tailwind, Shadcn/ui |
+| Queue | Celery 5 + Redis (separate queues per workload) |
+| Browser | Playwright + stealth |
+| AI | Haiku for scrape how-to cards. Sonnet for summary, prep, tailor, AutoApplier. Local UK JD parser for postings |
+| Embeddings | OpenAI `text-embedding-3-small` (pgvector) |
+| Storage | Cloudflare R2, private, signed URLs |
+| Auth | Google and LinkedIn OAuth only |
+| Sponsorship | Home Office worker sponsor register |
+| Company universe | Companies House snapshot |
+
+---
+
+## Product constraints (non-negotiable)
+
+1. No aggregator job ingestion.
+2. UK focus until an explicit product decision to expand.
+3. No CAPTCHA solver.
+4. Match scores from a published formula, not an LLM “decide the score”.
+5. AutoApplier reads the live form. It does not ship a library of ATS DOM maps.
+
+---
+
+## Documentation in this repo
+
+| File | What it is |
+|---|---|
+| [JobCompass_PRD.md](./JobCompass_PRD.md) | Product: users, journeys, boards, non-goals |
+| [JobCompass_TRD.md](./JobCompass_TRD.md) | Technical: architecture, APIs, agents, data |
 
 ---
 
 ## License
 
-No license.
+No license. Source code is not published here.
